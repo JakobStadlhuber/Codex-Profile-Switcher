@@ -32,6 +32,7 @@ Profile manager:
 - Manage, edit, duplicate, and delete profiles in a SwiftUI window.
 - Create a profile from the current `~/.codex/config.toml`.
 - Back up `~/.codex/config.toml` before applying a profile.
+- Launch automatically after login from the menu bar toggle.
 - Prevent multiple menu bar instances from running at the same time.
 
 ## Profiles
@@ -64,4 +65,5 @@ xcodebuild -project "Codex Profile Switcher.xcodeproj" -scheme CodexProfileSwitc
 
 - Codex is expected at `/Applications/Codex.app`.
 - Applying a profile writes to `~/.codex/config.toml`.
+- Automatic launch starts the menu bar app when the user logs in after a reboot.
 - Do not distribute personal profile files, API keys, or generated config backups.

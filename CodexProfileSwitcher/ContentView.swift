@@ -1,20 +1,24 @@
 import AppKit
 import Combine
+import ServiceManagement
 import SwiftUI
 
 @main
 struct CodexProfileSwitcherApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var loginItemStore = LoginItemStore()
     @StateObject private var store = ProfileStore()
 
     var body: some Scene {
         MenuBarExtra("Codex Profiles", systemImage: store.statusSymbolName) {
             ProfileMenuView()
+                .environmentObject(loginItemStore)
                 .environmentObject(store)
         }
 
         Window("Codex Profile Manager", id: "profile-manager") {
             ProfileManagerView()
+                .environmentObject(loginItemStore)
                 .environmentObject(store)
                 .frame(minWidth: 820, minHeight: 560)
         }
@@ -37,42 +41,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct ProfileMenuView: View {
     @Environment(\.openWindow) private var openWindow
+    @EnvironmentObject private var loginItemStore: LoginItemStore
     @EnvironmentObject private var store: ProfileStore
 
     var body: some View {
-        if store.profiles.isEmpty {
-            Button("Create Profile from Current Config") {
-                store.createProfileFromCurrentConfig()
-            }
-        } else {
-            ForEach(store.profiles) { profile in
-                Toggle(profile.name, isOn: Binding(
-                    get: {
-                        store.activeProfileID == profile.id
-                    },
-                    set: { isSelected in
-                        if isSelected {
-                            store.apply(profile)
+        Group {
+            if store.profiles.isEmpty {
+                Button("Create Profile from Current Config") {
+                    store.createProfileFromCurrentConfig()
+                }
+            } else {
+                ForEach(store.profiles) { profile in
+                    Toggle(profile.name, isOn: Binding(
+                        get: {
+                            store.activeProfileID == profile.id
+                        },
+                        set: { isSelected in
+                            if isSelected {
+                                store.apply(profile)
+                            }
                         }
-                    }
-                ))
+                    ))
+                }
+            }
+
+            Divider()
+
+            Toggle("Launch at Login", isOn: Binding(
+                get: { loginItemStore.isEnabled },
+                set: { loginItemStore.setEnabled($0) }
+            ))
+
+            if let message = loginItemStore.statusMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider()
+
+            Button("Manage Profiles...") {
+                openWindow(id: "profile-manager")
+                NSApp.activate()
+            }
+
+            Button("Quit") {
+                NSApp.terminate(nil)
             }
         }
-
-        Divider()
-
-        Button("Manage Profiles...") {
-            openWindow(id: "profile-manager")
-            NSApp.activate()
-        }
-
-        Button("Quit") {
-            NSApp.terminate(nil)
+        .onAppear {
+            loginItemStore.refresh()
         }
     }
 }
 
 struct ProfileManagerView: View {
+    @EnvironmentObject private var loginItemStore: LoginItemStore
     @EnvironmentObject private var store: ProfileStore
     @State private var selectedProfileID: UUID?
 
@@ -148,6 +172,23 @@ struct ProfileManagerView: View {
                 }
                 .buttonStyle(.borderless)
                 .padding(10)
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Launch at Login", isOn: Binding(
+                        get: { loginItemStore.isEnabled },
+                        set: { loginItemStore.setEnabled($0) }
+                    ))
+
+                    if let message = loginItemStore.statusMessage {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
             }
             .navigationSplitViewColumnWidth(min: 230, ideal: 280)
         } detail: {
@@ -169,6 +210,7 @@ struct ProfileManagerView: View {
         }
         .onAppear {
             selectedProfileID = selectedProfileID ?? store.activeProfileID ?? store.profiles.first?.id
+            loginItemStore.refresh()
         }
     }
 }
@@ -257,6 +299,51 @@ struct CodexProfile: Identifiable, Hashable {
     var contents: String
     var fileName: String
     var updatedAt: Date
+}
+
+@MainActor
+final class LoginItemStore: ObservableObject {
+    @Published private(set) var isEnabled = false
+    @Published private(set) var statusMessage: String?
+
+    init() {
+        refresh()
+    }
+
+    func refresh() {
+        switch SMAppService.mainApp.status {
+        case .enabled:
+            isEnabled = true
+            statusMessage = nil
+        case .requiresApproval:
+            isEnabled = true
+            statusMessage = "Approve in System Settings > General > Login Items."
+        case .notRegistered:
+            isEnabled = false
+            statusMessage = nil
+        case .notFound:
+            isEnabled = false
+            statusMessage = "Move the app to Applications before enabling launch at login."
+        @unknown default:
+            isEnabled = false
+            statusMessage = "Launch at login status is unavailable."
+        }
+    }
+
+    func setEnabled(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+
+            refresh()
+        } catch {
+            refresh()
+            statusMessage = "Could not update launch at login: \(error.localizedDescription)"
+        }
+    }
 }
 
 @MainActor
@@ -572,5 +659,6 @@ struct ProfileSwitcherState: Codable {
 
 #Preview {
     ProfileManagerView()
+        .environmentObject(LoginItemStore())
         .environmentObject(ProfileStore())
 }
