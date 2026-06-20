@@ -4,6 +4,16 @@ A small macOS menu bar app for switching between local Codex CLI configuration p
 
 The app stores profile snapshots in `~/.codex/profile-switcher/profiles` and applies a selected profile by writing it to `~/.codex/config.toml`. When a profile is applied, the app restarts Codex so the new configuration is picked up.
 
+## Screenshots
+
+Menu bar profile switching:
+
+![Menu bar profile switcher](Assets/Screenshots/menu-bar.png)
+
+Profile manager:
+
+![Codex Profile Manager](Assets/Screenshots/profile-manager.png)
+
 ## Status
 
 This is an unofficial utility. It is not affiliated with, endorsed by, or sponsored by OpenAI.
