@@ -11,8 +11,10 @@ This is an unofficial utility. It is not affiliated with, endorsed by, or sponso
 Recommended install:
 
 ```sh
-brew tap JakobStadlhuber/codex-profile-switcher https://github.com/JakobStadlhuber/Codex-Profile-Switcher && brew trust JakobStadlhuber/codex-profile-switcher && brew install --cask codex-profile-switcher
+brew tap JakobStadlhuber/codex-profile-switcher https://github.com/JakobStadlhuber/Codex-Profile-Switcher && brew trust JakobStadlhuber/codex-profile-switcher && brew install --cask --no-quarantine codex-profile-switcher
 ```
+
+The tap uses `--no-quarantine` while releases are unsigned. A future Developer ID signed and notarized release will remove that requirement.
 
 ## Screenshots
 

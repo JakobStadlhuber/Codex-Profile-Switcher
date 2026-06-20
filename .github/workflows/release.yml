@@ -65,6 +65,11 @@ jobs:
             "${SIGNING_ARGS[@]}" \
             build
 
+          APP_PATH="build/DerivedData/Build/Products/Release/${APP_NAME}.app"
+          if [[ -z "${APPLE_CERTIFICATE_BASE64}" || -z "${APPLE_CERTIFICATE_PASSWORD}" || -z "${APPLE_TEAM_ID}" ]]; then
+            codesign --force --deep --sign - "$APP_PATH"
+          fi
+
       - name: Package app
         run: |
           set -euo pipefail
