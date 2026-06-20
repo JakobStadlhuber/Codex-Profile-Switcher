@@ -42,9 +42,37 @@ From the command line:
 xcodebuild -project "Codex Profile Switcher.xcodeproj" -scheme CodexProfileSwitcher -configuration Debug build
 ```
 
+## Install With Homebrew
+
+This repository is also structured as a public Homebrew tap. After a release has been published, install the app with:
+
+```sh
+brew install --cask JakobStadlhuber/codex-profile-switcher/codex-profile-switcher
+```
+
+## Releases
+
+Pushing a version tag starts the release workflow:
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow builds a release `.app`, zips it, and attaches it to a GitHub release. If Apple Developer ID and notarization secrets are configured, the app is signed, notarized, and stapled before packaging.
+
+Required GitHub Actions secrets for signed and notarized releases:
+
+```text
+APPLE_DEVELOPER_ID_CERTIFICATE_BASE64
+APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD
+APPLE_ID
+APPLE_TEAM_ID
+APPLE_APP_SPECIFIC_PASSWORD
+```
+
 ## Notes
 
 - The app expects Codex to be installed at `/Applications/Codex.app`.
 - Profile switching writes to `~/.codex/config.toml`.
 - The app is intended for local use and should not be distributed with personal profile files, API keys, or generated config backups.
-
