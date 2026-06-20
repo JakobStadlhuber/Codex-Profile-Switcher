@@ -46,16 +46,16 @@ struct ProfileMenuView: View {
             }
         } else {
             ForEach(store.profiles) { profile in
-                Button {
-                    store.apply(profile)
-                } label: {
-                    HStack {
-                        Text(profile.name)
-                        if store.activeProfileID == profile.id {
-                            Image(systemName: "checkmark")
+                Toggle(profile.name, isOn: Binding(
+                    get: {
+                        store.activeProfileID == profile.id
+                    },
+                    set: { isSelected in
+                        if isSelected {
+                            store.apply(profile)
                         }
                     }
-                }
+                ))
             }
         }
 
