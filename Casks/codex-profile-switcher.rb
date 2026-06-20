@@ -7,5 +7,7 @@ cask "codex-profile-switcher" do
   desc "Menu bar app for switching local Codex CLI configuration profiles"
   homepage "https://github.com/JakobStadlhuber/Codex-Profile-Switcher"
 
+  depends_on macos: ">= :sonoma"
+
   app "Codex Profiles.app"
 end
