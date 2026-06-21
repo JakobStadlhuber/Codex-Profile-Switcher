@@ -110,6 +110,11 @@ struct ProfileManagerView: View {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(.green)
                         }
+
+                        if profile.hasAuthSnapshot {
+                            Image(systemName: "key.fill")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .tag(profile.id)
                 }
@@ -166,6 +171,13 @@ struct ProfileManagerView: View {
                         get: { loginItemStore.isEnabled },
                         set: { loginItemStore.setEnabled($0) }
                     ))
+
+                    if !store.lastMessage.isEmpty {
+                        Text(store.lastMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     if let message = loginItemStore.statusMessage {
                         Text(message)
@@ -255,6 +267,40 @@ struct ProfileEditorView: View {
                         NSWorkspace.shared.activateFileViewerSelecting([store.path(for: profile)])
                     }
                 }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Label("Codex Login", systemImage: profile.hasAuthSnapshot ? "key.fill" : "key")
+                            .font(.headline)
+
+                        Spacer()
+
+                        Text(profile.hasAuthSnapshot ? "Login attached" : "No login attached")
+                            .font(.caption)
+                            .foregroundStyle(profile.hasAuthSnapshot ? .green : .secondary)
+                    }
+
+                    Text("Optional. Capture the login currently stored by Codex.app. Applying this profile will restore that login before Codex restarts.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack {
+                        Button("Capture Current Login") {
+                            store.captureCurrentAuth(for: profile)
+                        }
+
+                        Button("Sign In in Codex...") {
+                            store.startCodexSignIn()
+                        }
+
+                        Button("Remove Login") {
+                            store.removeAuthSnapshot(for: profile)
+                        }
+                        .disabled(!profile.hasAuthSnapshot)
+                    }
+                }
+                .padding(12)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
             }
             .padding(18)
 
@@ -285,6 +331,7 @@ struct CodexProfile: Identifiable, Hashable {
     var contents: String
     var fileName: String
     var updatedAt: Date
+    var hasAuthSnapshot: Bool
 }
 
 @MainActor
@@ -340,7 +387,9 @@ final class ProfileStore: ObservableObject {
 
     let codexDirectoryURL: URL
     private let configURL: URL
+    private let authURL: URL
     private let profilesDirectoryURL: URL
+    private let authSnapshotsDirectoryURL: URL
     private let stateURL: URL
     private let codexBundleIdentifier = "com.openai.codex"
     private let codexAppURL = URL(filePath: "/Applications/Codex.app", directoryHint: .isDirectory)
@@ -353,9 +402,13 @@ final class ProfileStore: ObservableObject {
         let homeURL = FileManager.default.homeDirectoryForCurrentUser
         codexDirectoryURL = homeURL.appending(path: ".codex", directoryHint: .isDirectory)
         configURL = codexDirectoryURL.appending(path: "config.toml")
+        authURL = codexDirectoryURL.appending(path: "auth.json")
         profilesDirectoryURL = codexDirectoryURL
             .appending(path: "profile-switcher", directoryHint: .isDirectory)
             .appending(path: "profiles", directoryHint: .isDirectory)
+        authSnapshotsDirectoryURL = codexDirectoryURL
+            .appending(path: "profile-switcher", directoryHint: .isDirectory)
+            .appending(path: "auth", directoryHint: .isDirectory)
         stateURL = codexDirectoryURL
             .appending(path: "profile-switcher", directoryHint: .isDirectory)
             .appending(path: "state.json")
@@ -367,6 +420,10 @@ final class ProfileStore: ObservableObject {
 
     func path(for profile: CodexProfile) -> URL {
         profilesDirectoryURL.appending(path: profile.fileName)
+    }
+
+    func authSnapshotPath(for profile: CodexProfile) -> URL {
+        authSnapshotPath(forFileName: profile.fileName)
     }
 
     func reload() {
@@ -392,10 +449,26 @@ final class ProfileStore: ObservableObject {
         let fileName = safeFileName(for: cleanName)
         let oldURL = path(for: profile)
         let newURL = profilesDirectoryURL.appending(path: fileName)
-        let updated = CodexProfile(id: profile.id, name: cleanName, contents: contents, fileName: fileName, updatedAt: Date())
+        let oldAuthURL = authSnapshotPath(for: profile)
+        let newAuthURL = authSnapshotPath(forFileName: fileName)
+        let updated = CodexProfile(
+            id: profile.id,
+            name: cleanName,
+            contents: contents,
+            fileName: fileName,
+            updatedAt: Date(),
+            hasAuthSnapshot: FileManager.default.fileExists(atPath: newAuthURL.path)
+                || FileManager.default.fileExists(atPath: oldAuthURL.path)
+        )
 
         do {
             try write(contents, to: newURL)
+            if oldAuthURL != newAuthURL, FileManager.default.fileExists(atPath: oldAuthURL.path) {
+                if FileManager.default.fileExists(atPath: newAuthURL.path) {
+                    try FileManager.default.removeItem(at: newAuthURL)
+                }
+                try FileManager.default.moveItem(at: oldAuthURL, to: newAuthURL)
+            }
             if oldURL != newURL, FileManager.default.fileExists(atPath: oldURL.path) {
                 try FileManager.default.removeItem(at: oldURL)
             }
@@ -435,6 +508,10 @@ final class ProfileStore: ObservableObject {
     func delete(_ profile: CodexProfile) {
         do {
             try FileManager.default.removeItem(at: path(for: profile))
+            let profileAuthURL = authSnapshotPath(for: profile)
+            if FileManager.default.fileExists(atPath: profileAuthURL.path) {
+                try FileManager.default.removeItem(at: profileAuthURL)
+            }
             if activeProfileID == profile.id {
                 activeProfileID = nil
                 writeActiveProfileID(nil)
@@ -450,6 +527,7 @@ final class ProfileStore: ObservableObject {
         do {
             try ensureBackup()
             try write(profile.contents, to: configURL)
+            try applyAuthSnapshotIfAvailable(for: profile)
             activeProfileID = profile.id
             writeActiveProfileID(profile.id)
             lastMessage = "Applied \(profile.name). Restarting Codex..."
@@ -530,8 +608,54 @@ final class ProfileStore: ObservableObject {
             name: name,
             contents: contents,
             fileName: fileName,
-            updatedAt: values?.contentModificationDate ?? Date.distantPast
+            updatedAt: values?.contentModificationDate ?? Date.distantPast,
+            hasAuthSnapshot: FileManager.default.fileExists(atPath: authSnapshotPath(forFileName: fileName).path)
         )
+    }
+
+    func captureCurrentAuth(for profile: CodexProfile) {
+        guard FileManager.default.fileExists(atPath: authURL.path) else {
+            lastMessage = "No file-based Codex login found at ~/.codex/auth.json. Set cli_auth_credentials_store = \"file\", sign in with Codex, then capture again."
+            return
+        }
+
+        do {
+            let data = try Data(contentsOf: authURL)
+            try write(data, to: authSnapshotPath(for: profile))
+            reload()
+            lastMessage = "Captured current Codex login for \(profile.name)"
+        } catch {
+            lastMessage = "Could not capture Codex login: \(error.localizedDescription)"
+        }
+    }
+
+    func removeAuthSnapshot(for profile: CodexProfile) {
+        do {
+            let profileAuthURL = authSnapshotPath(for: profile)
+            if FileManager.default.fileExists(atPath: profileAuthURL.path) {
+                try FileManager.default.removeItem(at: profileAuthURL)
+            }
+            reload()
+            lastMessage = "Removed saved Codex login for \(profile.name)"
+        } catch {
+            lastMessage = "Could not remove saved Codex login: \(error.localizedDescription)"
+        }
+    }
+
+    func startCodexSignIn() {
+        do {
+            if FileManager.default.fileExists(atPath: authURL.path) {
+                try ensureAuthBackup()
+                try FileManager.default.removeItem(at: authURL)
+                lastMessage = "Current file-based login was backed up. Sign in in Codex, then capture it for a profile."
+            } else {
+                lastMessage = "Opening Codex. If it does not ask you to sign in, enable file-based auth and sign out from Codex first."
+            }
+
+            restartCodex()
+        } catch {
+            lastMessage = "Could not prepare Codex sign-in: \(error.localizedDescription)"
+        }
     }
 
     private func openCodex() {
@@ -554,6 +678,10 @@ final class ProfileStore: ObservableObject {
             at: profilesDirectoryURL,
             withIntermediateDirectories: true
         )
+        try? FileManager.default.createDirectory(
+            at: authSnapshotsDirectoryURL,
+            withIntermediateDirectories: true
+        )
     }
 
     private func ensureBackup() throws {
@@ -565,6 +693,25 @@ final class ProfileStore: ObservableObject {
         try FileManager.default.copyItem(at: configURL, to: backupURL)
     }
 
+    private func ensureAuthBackup() throws {
+        guard FileManager.default.fileExists(atPath: authURL.path) else { return }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let backupURL = codexDirectoryURL.appending(path: "auth.json.profile-switcher-backup-\(formatter.string(from: Date()))")
+        try FileManager.default.copyItem(at: authURL, to: backupURL)
+        try setPrivatePermissions(on: backupURL)
+    }
+
+    private func applyAuthSnapshotIfAvailable(for profile: CodexProfile) throws {
+        let profileAuthURL = authSnapshotPath(for: profile)
+        guard FileManager.default.fileExists(atPath: profileAuthURL.path) else { return }
+
+        try ensureAuthBackup()
+        let data = try Data(contentsOf: profileAuthURL)
+        try write(data, to: authURL)
+    }
+
     private func write(_ contents: String, to url: URL) throws {
         let temporaryURL = url.deletingLastPathComponent().appending(path: ".\(url.lastPathComponent).tmp")
         try contents.write(to: temporaryURL, atomically: true, encoding: .utf8)
@@ -574,6 +721,24 @@ final class ProfileStore: ObservableObject {
         } else {
             try FileManager.default.moveItem(at: temporaryURL, to: url)
         }
+    }
+
+    private func write(_ data: Data, to url: URL) throws {
+        let temporaryURL = url.deletingLastPathComponent().appending(path: ".\(url.lastPathComponent).tmp")
+        try data.write(to: temporaryURL, options: [.atomic])
+        try setPrivatePermissions(on: temporaryURL)
+
+        if FileManager.default.fileExists(atPath: url.path) {
+            _ = try FileManager.default.replaceItemAt(url, withItemAt: temporaryURL)
+        } else {
+            try FileManager.default.moveItem(at: temporaryURL, to: url)
+        }
+
+        try setPrivatePermissions(on: url)
+    }
+
+    private func setPrivatePermissions(on url: URL) throws {
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private func uniqueName(_ baseName: String, excluding excludedID: UUID? = nil) -> String {
@@ -600,6 +765,11 @@ final class ProfileStore: ObservableObject {
             .replacingOccurrences(of: " ", with: "-")
 
         return "\(baseName.isEmpty ? "profile" : baseName).toml"
+    }
+
+    private func authSnapshotPath(forFileName fileName: String) -> URL {
+        let baseName = URL(filePath: fileName).deletingPathExtension().lastPathComponent
+        return authSnapshotsDirectoryURL.appending(path: "\(baseName).auth.json")
     }
 
     private func stableIDSeed(for value: String) -> String {

@@ -31,6 +31,7 @@ Profile manager:
 - Switch between saved Codex configuration profiles from the menu bar.
 - Manage, edit, duplicate, and delete profiles in a SwiftUI window.
 - Create a profile from the current `~/.codex/config.toml`.
+- Optionally attach a file-based Codex login snapshot to a profile.
 - Back up `~/.codex/config.toml` before applying a profile.
 - Launch automatically after login from the menu bar toggle.
 - Prevent multiple menu bar instances from running at the same time.
@@ -51,6 +52,28 @@ Azure OpenAI API.toml
 Ollama GLM 5.2 Cloud.toml
 ```
 
+## Optional Login Switching
+
+Profiles can optionally capture the current file-based Codex login from:
+
+```text
+~/.codex/auth.json
+```
+
+Saved login snapshots are stored privately under:
+
+```text
+~/.codex/profile-switcher/auth
+```
+
+To use this feature, configure Codex to use file-based credential storage:
+
+```toml
+cli_auth_credentials_store = "file"
+```
+
+Then sign in with Codex, select a profile, and click **Capture Current Login**. Applying that profile later restores its saved login before restarting Codex. Treat saved auth snapshots like passwords; they contain Codex access tokens.
+
 ## Build From Source
 
 Open the project in Xcode and run the `CodexProfileSwitcher` scheme.
@@ -65,5 +88,6 @@ xcodebuild -project "Codex Profile Switcher.xcodeproj" -scheme CodexProfileSwitc
 
 - Codex is expected at `/Applications/Codex.app`.
 - Applying a profile writes to `~/.codex/config.toml`.
+- Applying a profile with an attached login writes to `~/.codex/auth.json`.
 - Automatic launch starts the menu bar app when the user logs in after a reboot.
 - Do not distribute personal profile files, API keys, or generated config backups.
