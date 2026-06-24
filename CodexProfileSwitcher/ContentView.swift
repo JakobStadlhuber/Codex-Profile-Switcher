@@ -3,6 +3,11 @@ import Combine
 import ServiceManagement
 import SwiftUI
 
+private enum ProfileManagerWindowLayout {
+    static let minimumSize = NSSize(width: 820, height: 560)
+    static let defaultSize = NSSize(width: 920, height: 640)
+}
+
 @main
 struct CodexProfileSwitcherApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -20,9 +25,43 @@ struct CodexProfileSwitcherApp: App {
             ProfileManagerView()
                 .environmentObject(loginItemStore)
                 .environmentObject(store)
-                .frame(minWidth: 820, minHeight: 560)
+                .frame(
+                    minWidth: ProfileManagerWindowLayout.minimumSize.width,
+                    minHeight: ProfileManagerWindowLayout.minimumSize.height
+                )
+                .background(ProfileManagerWindowConfigurator(minimumSize: ProfileManagerWindowLayout.minimumSize))
         }
-        .defaultSize(width: 920, height: 640)
+        .defaultSize(
+            width: ProfileManagerWindowLayout.defaultSize.width,
+            height: ProfileManagerWindowLayout.defaultSize.height
+        )
+        .windowResizability(.contentMinSize)
+    }
+}
+
+private struct ProfileManagerWindowConfigurator: NSViewRepresentable {
+    let minimumSize: NSSize
+
+    func makeNSView(context: Context) -> NSView {
+        NSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let window = nsView.window else { return }
+
+            window.minSize = minimumSize
+
+            let currentFrame = window.frame
+            let targetWidth = max(currentFrame.width, minimumSize.width)
+            let targetHeight = max(currentFrame.height, minimumSize.height)
+            guard targetWidth != currentFrame.width || targetHeight != currentFrame.height else { return }
+
+            var adjustedFrame = currentFrame
+            adjustedFrame.origin.y -= targetHeight - currentFrame.height
+            adjustedFrame.size = NSSize(width: targetWidth, height: targetHeight)
+            window.setFrame(adjustedFrame, display: true)
+        }
     }
 }
 
@@ -84,15 +123,16 @@ struct ProfileMenuView: View {
 struct ProfileManagerView: View {
     @EnvironmentObject private var loginItemStore: LoginItemStore
     @EnvironmentObject private var store: ProfileStore
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var selectedProfileID: UUID?
 
     private var selectedProfile: CodexProfile? {
-        guard let selectedProfileID else { return store.profiles.first }
-        return store.profiles.first { $0.id == selectedProfileID } ?? store.profiles.first
+        guard let selectedProfileID else { return nil }
+        return store.profiles.first { $0.id == selectedProfileID }
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             VStack(spacing: 0) {
                 List(store.profiles, selection: $selectedProfileID) { profile in
                     HStack {
@@ -207,9 +247,25 @@ struct ProfileManagerView: View {
             }
         }
         .onAppear {
-            selectedProfileID = selectedProfileID ?? store.activeProfileID ?? store.profiles.first?.id
+            columnVisibility = .all
+            selectProfileIfNeeded()
             loginItemStore.refresh()
         }
+        .onChange(of: store.profiles) { _, _ in
+            selectProfileIfNeeded()
+        }
+        .onChange(of: store.activeProfileID) { _, _ in
+            selectProfileIfNeeded()
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+
+    private func selectProfileIfNeeded() {
+        if let selectedProfileID, store.profiles.contains(where: { $0.id == selectedProfileID }) {
+            return
+        }
+
+        selectedProfileID = store.activeProfileID ?? store.profiles.first?.id
     }
 }
 
@@ -303,6 +359,7 @@ struct ProfileEditorView: View {
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
             }
             .padding(18)
+            .fixedSize(horizontal: false, vertical: true)
 
             Divider()
 
@@ -310,6 +367,7 @@ struct ProfileEditorView: View {
                 .font(.system(.body, design: .monospaced))
                 .scrollContentBackground(.hidden)
                 .padding(12)
+                .frame(minHeight: 260)
         }
         .onAppear {
             load(profileID: profile.id)
