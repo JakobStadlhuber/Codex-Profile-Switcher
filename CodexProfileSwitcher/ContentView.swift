@@ -3,11 +3,6 @@ import Combine
 import ServiceManagement
 import SwiftUI
 
-private enum ProfileManagerWindowLayout {
-    static let minimumSize = NSSize(width: 820, height: 560)
-    static let defaultSize = NSSize(width: 920, height: 640)
-}
-
 @main
 struct CodexProfileSwitcherApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -25,43 +20,10 @@ struct CodexProfileSwitcherApp: App {
             ProfileManagerView()
                 .environmentObject(loginItemStore)
                 .environmentObject(store)
-                .frame(
-                    minWidth: ProfileManagerWindowLayout.minimumSize.width,
-                    minHeight: ProfileManagerWindowLayout.minimumSize.height
-                )
-                .background(ProfileManagerWindowConfigurator(minimumSize: ProfileManagerWindowLayout.minimumSize))
+                .frame(minWidth: 820, minHeight: 560)
         }
-        .defaultSize(
-            width: ProfileManagerWindowLayout.defaultSize.width,
-            height: ProfileManagerWindowLayout.defaultSize.height
-        )
+        .defaultSize(width: 920, height: 640)
         .windowResizability(.contentMinSize)
-    }
-}
-
-private struct ProfileManagerWindowConfigurator: NSViewRepresentable {
-    let minimumSize: NSSize
-
-    func makeNSView(context: Context) -> NSView {
-        NSView(frame: .zero)
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            guard let window = nsView.window else { return }
-
-            window.minSize = minimumSize
-
-            let currentFrame = window.frame
-            let targetWidth = max(currentFrame.width, minimumSize.width)
-            let targetHeight = max(currentFrame.height, minimumSize.height)
-            guard targetWidth != currentFrame.width || targetHeight != currentFrame.height else { return }
-
-            var adjustedFrame = currentFrame
-            adjustedFrame.origin.y -= targetHeight - currentFrame.height
-            adjustedFrame.size = NSSize(width: targetWidth, height: targetHeight)
-            window.setFrame(adjustedFrame, display: true)
-        }
     }
 }
 
@@ -359,7 +321,6 @@ struct ProfileEditorView: View {
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
             }
             .padding(18)
-            .fixedSize(horizontal: false, vertical: true)
 
             Divider()
 
@@ -367,7 +328,6 @@ struct ProfileEditorView: View {
                 .font(.system(.body, design: .monospaced))
                 .scrollContentBackground(.hidden)
                 .padding(12)
-                .frame(minHeight: 260)
         }
         .onAppear {
             load(profileID: profile.id)
