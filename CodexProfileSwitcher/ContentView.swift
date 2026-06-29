@@ -313,8 +313,15 @@ struct ProfileEditorView: View {
                         .foregroundStyle(.secondary)
 
                     HStack {
-                        Button("Capture Current Login") {
-                            store.captureCurrentAuth(for: profile)
+                        Button(store.hasCurrentAuth ? "Capture Current Login" : "Sign In to Capture") {
+                            if store.hasCurrentAuth {
+                                store.captureCurrentAuth(for: profile)
+                            } else {
+                                let updated = store.startCodexSignIn(for: profile, name: name, contents: contents)
+                                name = updated.name
+                                contents = updated.contents
+                                selectedProfileID = updated.id
+                            }
                         }
 
                         Button("Sign In in Codex...") {
@@ -435,6 +442,10 @@ final class ProfileStore: ObservableObject {
 
     var statusSymbolName: String {
         activeProfileID == nil ? "person.crop.circle.badge.questionmark" : "person.crop.circle.badge.checkmark"
+    }
+
+    var hasCurrentAuth: Bool {
+        FileManager.default.fileExists(atPath: authURL.path)
     }
 
     init() {
@@ -713,9 +724,8 @@ final class ProfileStore: ObservableObject {
     }
 
     func captureCurrentAuth(for profile: CodexProfile) {
-        guard FileManager.default.fileExists(atPath: authURL.path) else {
+        guard hasCurrentAuth else {
             lastMessage = "No file-based Codex login found at ~/.codex/auth.json. Set cli_auth_credentials_store = \"file\", sign in with Codex, then capture again."
-            showAlert(title: "No Codex Login Found", message: lastMessage)
             return
         }
 
@@ -726,7 +736,6 @@ final class ProfileStore: ObservableObject {
             lastMessage = "Captured current Codex login for \(profile.name)"
         } catch {
             lastMessage = "Could not capture Codex login: \(error.localizedDescription)"
-            showAlert(title: "Could Not Capture Login", message: lastMessage)
         }
     }
 
@@ -867,14 +876,6 @@ final class ProfileStore: ObservableObject {
     private func markAuthSnapshotPresent(for profile: CodexProfile) {
         guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
         profiles[index].hasAuthSnapshot = true
-    }
-
-    private func showAlert(title: String, message: String) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.alertStyle = .informational
-        alert.runModal()
     }
 
     private func uniqueName(_ baseName: String, excluding excludedID: UUID? = nil) -> String {
