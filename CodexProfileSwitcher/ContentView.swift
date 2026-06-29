@@ -606,6 +606,8 @@ final class ProfileStore: ObservableObject {
                 app.forceTerminate()
             }
 
+            self.terminateCodexHelpers()
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 self.openCodex()
             }
@@ -614,7 +616,6 @@ final class ProfileStore: ObservableObject {
 
     private func closeCodexForStateUpdate() {
         let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: codexBundleIdentifier)
-        guard !runningApps.isEmpty else { return }
 
         for app in runningApps {
             app.terminate()
@@ -624,7 +625,7 @@ final class ProfileStore: ObservableObject {
         while Date() < deadline {
             let stillRunning = NSRunningApplication.runningApplications(withBundleIdentifier: codexBundleIdentifier)
             if stillRunning.isEmpty {
-                return
+                break
             }
 
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
@@ -635,7 +636,24 @@ final class ProfileStore: ObservableObject {
             app.forceTerminate()
         }
 
+        terminateCodexHelpers()
         Thread.sleep(forTimeInterval: 0.5)
+    }
+
+    private func terminateCodexHelpers() {
+        let patterns = [
+            "Codex.app/Contents/Resources/codex app-server",
+            "Codex.app/Contents/Resources/native/bare-modifier-monitor",
+            "Codex.app/Contents/Resources/cua_node/bin/node_repl"
+        ]
+
+        for pattern in patterns {
+            let process = Process()
+            process.executableURL = URL(filePath: "/usr/bin/pkill")
+            process.arguments = ["-f", pattern]
+            try? process.run()
+            process.waitUntilExit()
+        }
     }
 
     func refreshActiveProfile() {
