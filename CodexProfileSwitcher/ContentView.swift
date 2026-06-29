@@ -314,9 +314,7 @@ struct ProfileEditorView: View {
 
                     HStack {
                         Button("Capture Current Login") {
-                            let updated = store.update(profile, name: name, contents: contents)
-                            store.captureCurrentAuth(for: updated)
-                            selectedProfileID = updated.id
+                            store.captureCurrentAuth(for: profile)
                         }
 
                         Button("Sign In in Codex...") {
@@ -717,16 +715,18 @@ final class ProfileStore: ObservableObject {
     func captureCurrentAuth(for profile: CodexProfile) {
         guard FileManager.default.fileExists(atPath: authURL.path) else {
             lastMessage = "No file-based Codex login found at ~/.codex/auth.json. Set cli_auth_credentials_store = \"file\", sign in with Codex, then capture again."
+            showAlert(title: "No Codex Login Found", message: lastMessage)
             return
         }
 
         do {
             let data = try Data(contentsOf: authURL)
             try write(data, to: authSnapshotPath(for: profile))
-            reload()
+            markAuthSnapshotPresent(for: profile)
             lastMessage = "Captured current Codex login for \(profile.name)"
         } catch {
             lastMessage = "Could not capture Codex login: \(error.localizedDescription)"
+            showAlert(title: "Could Not Capture Login", message: lastMessage)
         }
     }
 
@@ -862,6 +862,19 @@ final class ProfileStore: ObservableObject {
 
     private func setPrivatePermissions(on url: URL) throws {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    private func markAuthSnapshotPresent(for profile: CodexProfile) {
+        guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        profiles[index].hasAuthSnapshot = true
+    }
+
+    private func showAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .informational
+        alert.runModal()
     }
 
     private func uniqueName(_ baseName: String, excluding excludedID: UUID? = nil) -> String {
