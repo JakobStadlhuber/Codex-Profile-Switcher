@@ -304,17 +304,29 @@ struct ProfileEditorView: View {
 
                     HStack {
                         Button("Capture Current Login") {
-                            store.captureCurrentAuth(for: profile)
+                            let updated = store.update(profile, name: name, contents: contents)
+                            store.captureCurrentAuth(for: updated)
+                            selectedProfileID = updated.id
                         }
 
                         Button("Sign In in Codex...") {
-                            store.startCodexSignIn()
+                            let updated = store.startCodexSignIn(for: profile, name: name, contents: contents)
+                            name = updated.name
+                            contents = updated.contents
+                            selectedProfileID = updated.id
                         }
 
                         Button("Remove Login") {
                             store.removeAuthSnapshot(for: profile)
                         }
                         .disabled(!profile.hasAuthSnapshot)
+                    }
+
+                    if !store.lastMessage.isEmpty {
+                        Text(store.lastMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(12)
@@ -572,11 +584,11 @@ final class ProfileStore: ObservableObject {
         }
     }
 
-    func restartCodex() {
+    func restartCodex(successMessage: String = "Codex restarted") {
         let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: codexBundleIdentifier)
 
         if runningApps.isEmpty {
-            openCodex()
+            openCodex(successMessage: successMessage)
             return
         }
 
@@ -595,7 +607,7 @@ final class ProfileStore: ObservableObject {
             self.terminateCodexHelpers()
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                self.openCodex()
+                self.openCodex(successMessage: successMessage)
             }
         }
     }
@@ -721,23 +733,34 @@ final class ProfileStore: ObservableObject {
         }
     }
 
-    func startCodexSignIn() {
+    @discardableResult
+    func startCodexSignIn(for profile: CodexProfile, name: String, contents: String) -> CodexProfile {
+        let updated = update(profile, name: name, contents: configWithFileAuth(from: contents))
+
         do {
+            try ensureBackup()
+            closeCodexForStateUpdate()
+            try write(updated.contents, to: configURL)
+            activeProfileID = updated.id
+            writeActiveProfileID(updated.id)
+
             if FileManager.default.fileExists(atPath: authURL.path) {
                 try ensureAuthBackup()
                 try FileManager.default.removeItem(at: authURL)
-                lastMessage = "Current file-based login was backed up. Sign in in Codex, then capture it for a profile."
+                lastMessage = "Current file-based login was backed up. Sign in in Codex, then capture it for \(updated.name)."
             } else {
-                lastMessage = "Opening Codex. If it does not ask you to sign in, enable file-based auth and sign out from Codex first."
+                lastMessage = "Opening Codex for file-based sign-in. Sign in, then capture it for \(updated.name)."
             }
 
-            restartCodex()
+            openCodex(successMessage: "Codex opened for sign-in. After signing in, capture it for \(updated.name).")
         } catch {
             lastMessage = "Could not prepare Codex sign-in: \(error.localizedDescription)"
         }
+
+        return updated
     }
 
-    private func openCodex() {
+    private func openCodex(successMessage: String = "Codex restarted") {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
 
@@ -746,7 +769,7 @@ final class ProfileStore: ObservableObject {
                 if let error {
                     self?.lastMessage = "Could not open Codex: \(error.localizedDescription)"
                 } else {
-                    self?.lastMessage = "Codex restarted"
+                    self?.lastMessage = successMessage
                 }
             }
         }
@@ -848,6 +871,22 @@ final class ProfileStore: ObservableObject {
             .replacingOccurrences(of: " ", with: "-")
 
         return "\(baseName.isEmpty ? "profile" : baseName).toml"
+    }
+
+    private func configWithFileAuth(from contents: String) -> String {
+        let fileAuthLine = "cli_auth_credentials_store = \"file\""
+        var lines = contents.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+
+        if let index = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("cli_auth_credentials_store") }) {
+            lines[index] = fileAuthLine
+        } else {
+            lines.insert(fileAuthLine, at: 0)
+            if lines.count > 1, !lines[1].isEmpty {
+                lines.insert("", at: 1)
+            }
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     private func authSnapshotPath(forFileName fileName: String) -> URL {
