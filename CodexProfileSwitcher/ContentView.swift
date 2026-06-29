@@ -353,7 +353,6 @@ struct ProfileEditorView: View {
 
             TextEditor(text: $contents)
                 .font(.system(.body, design: .monospaced))
-                .scrollContentBackground(.hidden)
                 .padding(12)
         }
         .onAppear {
