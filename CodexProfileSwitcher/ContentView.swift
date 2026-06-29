@@ -93,6 +93,12 @@ struct ProfileManagerView: View {
         return store.profiles.first { $0.id == selectedProfileID }
     }
 
+    private var versionText: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown"
+        return "Version \(version) (\(build))"
+    }
+
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             VStack(spacing: 0) {
@@ -173,6 +179,10 @@ struct ProfileManagerView: View {
                         get: { loginItemStore.isEnabled },
                         set: { loginItemStore.setEnabled($0) }
                     ))
+
+                    Text(versionText)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
 
                     if !store.lastMessage.isEmpty {
                         Text(store.lastMessage)
