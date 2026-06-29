@@ -590,8 +590,10 @@ final class ProfileStore: ObservableObject {
     func apply(_ profile: CodexProfile) {
         do {
             try ensureBackup()
+            let contents = configPreservingCurrentProjects(profile.contents)
+            try updateProfileContentsIfNeeded(profile, contents: contents)
             closeCodexForStateUpdate()
-            try write(profile.contents, to: configURL)
+            try write(contents, to: configURL)
             try applyAuthSnapshotIfAvailable(for: profile)
             activeProfileID = profile.id
             writeActiveProfileID(profile.id)
@@ -753,7 +755,7 @@ final class ProfileStore: ObservableObject {
 
     @discardableResult
     func startCodexSignIn(for profile: CodexProfile, name: String, contents: String) -> CodexProfile {
-        let updated = update(profile, name: name, contents: configWithFileAuth(from: contents))
+        let updated = update(profile, name: name, contents: configWithFileAuth(from: configPreservingCurrentProjects(contents)))
 
         do {
             try ensureBackup()
@@ -872,6 +874,16 @@ final class ProfileStore: ObservableObject {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
+    private func updateProfileContentsIfNeeded(_ profile: CodexProfile, contents: String) throws {
+        guard contents != profile.contents else { return }
+
+        try write(contents, to: path(for: profile))
+        if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
+            profiles[index].contents = contents
+            profiles[index].updatedAt = Date()
+        }
+    }
+
     private func markAuthSnapshotPresent(for profile: CodexProfile) {
         guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
         profiles[index].hasAuthSnapshot = true
@@ -917,6 +929,81 @@ final class ProfileStore: ObservableObject {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    private func configPreservingCurrentProjects(_ contents: String) -> String {
+        guard let currentConfig = try? String(contentsOf: configURL, encoding: .utf8) else {
+            return contents
+        }
+
+        let projectSections = projectSections(from: currentConfig)
+        guard !projectSections.isEmpty else {
+            return contents
+        }
+
+        let profileConfig = removingProjectSections(from: contents)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if profileConfig.isEmpty {
+            return "\(projectSections)\n"
+        }
+
+        return "\(profileConfig)\n\n\(projectSections)\n"
+    }
+
+    private func projectSections(from contents: String) -> String {
+        let lines = contents.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var sections: [[String]] = []
+        var section: [String] = []
+        var isCollectingProject = false
+
+        for line in lines {
+            if isTableHeader(line) {
+                if isCollectingProject {
+                    sections.append(section.trimmingTrailingEmptyLines())
+                }
+                isCollectingProject = isProjectHeader(line)
+                section = isCollectingProject ? [line] : []
+            } else if isCollectingProject {
+                section.append(line)
+            }
+        }
+
+        if isCollectingProject {
+            sections.append(section.trimmingTrailingEmptyLines())
+        }
+
+        return sections
+            .map { $0.joined(separator: "\n") }
+            .joined(separator: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func removingProjectSections(from contents: String) -> String {
+        let lines = contents.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var keptLines: [String] = []
+        var isSkippingProject = false
+
+        for line in lines {
+            if isTableHeader(line) {
+                isSkippingProject = isProjectHeader(line)
+            }
+
+            if !isSkippingProject {
+                keptLines.append(line)
+            }
+        }
+
+        return keptLines.joined(separator: "\n")
+    }
+
+    private func isTableHeader(_ line: String) -> Bool {
+        let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+        return trimmedLine.hasPrefix("[") && trimmedLine.hasSuffix("]")
+    }
+
+    private func isProjectHeader(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespaces).hasPrefix("[projects.")
     }
 
     private func authSnapshotPath(forFileName fileName: String) -> URL {
@@ -982,6 +1069,16 @@ final class ProfileStore: ObservableObject {
 
 struct ProfileSwitcherState: Codable {
     var activeProfileID: UUID?
+}
+
+private extension Array where Element == String {
+    func trimmingTrailingEmptyLines() -> [String] {
+        var lines = self
+        while lines.last?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
+            lines.removeLast()
+        }
+        return lines
+    }
 }
 
 #Preview {
