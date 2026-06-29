@@ -406,15 +406,13 @@ final class ProfileStore: ObservableObject {
     let codexDirectoryURL: URL
     private let configURL: URL
     private let authURL: URL
-    private let sessionsDirectoryURL: URL
-    private let archivedSessionsDirectoryURL: URL
-    private let sessionIndexURL: URL
     private let sqliteDirectoryURL: URL
     private let stateDatabaseURL: URL
     private let codexDevDatabaseURL: URL
     private let profilesDirectoryURL: URL
     private let authSnapshotsDirectoryURL: URL
     private let threadSnapshotsDirectoryURL: URL
+    private let backupsDirectoryURL: URL
     private let stateURL: URL
     private let codexBundleIdentifier = "com.openai.codex"
     private let codexAppURL = URL(filePath: "/Applications/Codex.app", directoryHint: .isDirectory)
@@ -428,9 +426,6 @@ final class ProfileStore: ObservableObject {
         codexDirectoryURL = homeURL.appending(path: ".codex", directoryHint: .isDirectory)
         configURL = codexDirectoryURL.appending(path: "config.toml")
         authURL = codexDirectoryURL.appending(path: "auth.json")
-        sessionsDirectoryURL = codexDirectoryURL.appending(path: "sessions", directoryHint: .isDirectory)
-        archivedSessionsDirectoryURL = codexDirectoryURL.appending(path: "archived_sessions", directoryHint: .isDirectory)
-        sessionIndexURL = codexDirectoryURL.appending(path: "session_index.jsonl")
         sqliteDirectoryURL = codexDirectoryURL.appending(path: "sqlite", directoryHint: .isDirectory)
         stateDatabaseURL = sqliteDirectoryURL.appending(path: "state_5.sqlite")
         codexDevDatabaseURL = sqliteDirectoryURL.appending(path: "codex-dev.db")
@@ -443,6 +438,9 @@ final class ProfileStore: ObservableObject {
         threadSnapshotsDirectoryURL = codexDirectoryURL
             .appending(path: "profile-switcher", directoryHint: .isDirectory)
             .appending(path: "threads", directoryHint: .isDirectory)
+        backupsDirectoryURL = codexDirectoryURL
+            .appending(path: "profile-switcher", directoryHint: .isDirectory)
+            .appending(path: "backups", directoryHint: .isDirectory)
         stateURL = codexDirectoryURL
             .appending(path: "profile-switcher", directoryHint: .isDirectory)
             .appending(path: "state.json")
@@ -573,10 +571,10 @@ final class ProfileStore: ObservableObject {
         do {
             try ensureBackup()
             closeCodexForStateUpdate()
-            try snapshotCurrentThreads()
+            try backupStateDatabase()
             try write(profile.contents, to: configURL)
             try applyAuthSnapshotIfAvailable(for: profile)
-            try mergeThreadSnapshot(for: profile)
+            try relabelThreadsForProfile(profile)
             activeProfileID = profile.id
             writeActiveProfileID(profile.id)
             lastMessage = "Applied \(profile.name). Opening Codex..."
@@ -779,6 +777,10 @@ final class ProfileStore: ObservableObject {
             at: threadSnapshotsDirectoryURL,
             withIntermediateDirectories: true
         )
+        try? FileManager.default.createDirectory(
+            at: backupsDirectoryURL,
+            withIntermediateDirectories: true
+        )
     }
 
     private func ensureBackup() throws {
@@ -834,168 +836,53 @@ final class ProfileStore: ObservableObject {
         try setPrivatePermissions(on: url)
     }
 
-    private func snapshotCurrentThreads() throws {
-        guard
-            let activeProfileID,
-            let profile = profiles.first(where: { $0.id == activeProfileID })
-        else {
-            return
-        }
+    private func backupStateDatabase() throws {
+        guard FileManager.default.fileExists(atPath: stateDatabaseURL.path) else { return }
 
-        let snapshotURL = threadSnapshotPath(for: profile)
-        try FileManager.default.createDirectory(at: snapshotURL, withIntermediateDirectories: true)
-        try mergeDirectory(from: sessionsDirectoryURL, to: snapshotURL.appending(path: "sessions", directoryHint: .isDirectory))
-        try mergeDirectory(from: archivedSessionsDirectoryURL, to: snapshotURL.appending(path: "archived_sessions", directoryHint: .isDirectory))
-        try mergeSessionIndex(from: sessionIndexURL, to: snapshotURL.appending(path: "session_index.jsonl"))
-        try snapshotSQLiteDatabase(from: stateDatabaseURL, to: snapshotURL.appending(path: "sqlite/state_5.sqlite"))
-        try snapshotSQLiteDatabase(from: codexDevDatabaseURL, to: snapshotURL.appending(path: "sqlite/codex-dev.db"))
-    }
+        try FileManager.default.createDirectory(at: backupsDirectoryURL, withIntermediateDirectories: true)
+        let pristineURL = backupsDirectoryURL.appending(path: "state_5.pristine.sqlite")
+        guard !FileManager.default.fileExists(atPath: pristineURL.path) else { return }
 
-    private func mergeThreadSnapshot(for profile: CodexProfile) throws {
-        let snapshotURL = threadSnapshotPath(for: profile)
-        guard FileManager.default.fileExists(atPath: snapshotURL.path) else { return }
-
-        try mergeDirectory(from: snapshotURL.appending(path: "sessions", directoryHint: .isDirectory), to: sessionsDirectoryURL)
-        try mergeDirectory(from: snapshotURL.appending(path: "archived_sessions", directoryHint: .isDirectory), to: archivedSessionsDirectoryURL)
-        try mergeSessionIndex(from: snapshotURL.appending(path: "session_index.jsonl"), to: sessionIndexURL)
-        try mergeStateDatabase(from: snapshotURL.appending(path: "sqlite/state_5.sqlite"), to: stateDatabaseURL)
-        try mergeCatalogDatabase(from: snapshotURL.appending(path: "sqlite/codex-dev.db"), to: codexDevDatabaseURL)
-    }
-
-    private func mergeDirectory(from sourceURL: URL, to destinationURL: URL) throws {
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
-        try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
-
-        guard let enumerator = FileManager.default.enumerator(
-            at: sourceURL,
-            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return
-        }
-
-        for case let sourceItemURL as URL in enumerator {
-            let relativePath = String(sourceItemURL.path.dropFirst(sourceURL.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            let destinationItemURL = destinationURL.appending(path: relativePath)
-            let values = try sourceItemURL.resourceValues(forKeys: [.isDirectoryKey, .contentModificationDateKey])
-
-            if values.isDirectory == true {
-                try FileManager.default.createDirectory(at: destinationItemURL, withIntermediateDirectories: true)
-                continue
-            }
-
-            if shouldCopyFile(from: sourceItemURL, to: destinationItemURL, sourceModifiedAt: values.contentModificationDate) {
-                try FileManager.default.createDirectory(at: destinationItemURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                if FileManager.default.fileExists(atPath: destinationItemURL.path) {
-                    try FileManager.default.removeItem(at: destinationItemURL)
-                }
-                try FileManager.default.copyItem(at: sourceItemURL, to: destinationItemURL)
-            }
-        }
-    }
-
-    private func shouldCopyFile(from sourceURL: URL, to destinationURL: URL, sourceModifiedAt: Date?) -> Bool {
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return false }
-        guard FileManager.default.fileExists(atPath: destinationURL.path) else { return true }
-        guard
-            let sourceModifiedAt,
-            let destinationValues = try? destinationURL.resourceValues(forKeys: [.contentModificationDateKey]),
-            let destinationModifiedAt = destinationValues.contentModificationDate
-        else {
-            return false
-        }
-
-        return sourceModifiedAt > destinationModifiedAt
-    }
-
-    private func mergeSessionIndex(from sourceURL: URL, to destinationURL: URL) throws {
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
-
-        var linesByID: [String: String] = [:]
-        let existingContents = (try? String(contentsOf: destinationURL, encoding: .utf8)) ?? ""
-        for line in existingContents.split(separator: "\n", omittingEmptySubsequences: true).map(String.init) {
-            if let id = sessionIndexID(from: line) {
-                linesByID[id] = line
-            }
-        }
-
-        let sourceContents = try String(contentsOf: sourceURL, encoding: .utf8)
-        for line in sourceContents.split(separator: "\n", omittingEmptySubsequences: true).map(String.init) {
-            if let id = sessionIndexID(from: line), linesByID[id] == nil {
-                linesByID[id] = line
-            }
-        }
-
-        let contents = linesByID.values.sorted().joined(separator: "\n") + "\n"
-        try write(contents, to: destinationURL)
-    }
-
-    private func sessionIndexID(from line: String) -> String? {
-        guard
-            let data = line.data(using: .utf8),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return nil
-        }
-
-        return object["id"] as? String
-    }
-
-    private func snapshotSQLiteDatabase(from sourceURL: URL, to destinationURL: URL) throws {
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
-
-        try FileManager.default.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let temporaryURL = destinationURL.deletingLastPathComponent().appending(path: ".\(destinationURL.lastPathComponent).tmp")
+        let temporaryURL = backupsDirectoryURL.appending(path: ".state_5.pristine.tmp")
         if FileManager.default.fileExists(atPath: temporaryURL.path) {
             try FileManager.default.removeItem(at: temporaryURL)
         }
 
-        try runSQLite(sourceURL, sql: "PRAGMA busy_timeout = 5000; PRAGMA wal_checkpoint(FULL); VACUUM INTO \(sqliteLiteral(temporaryURL.path));")
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
-        }
-        try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
+        try runSQLite(stateDatabaseURL, sql: "PRAGMA busy_timeout = 5000; PRAGMA wal_checkpoint(FULL); VACUUM INTO \(sqliteLiteral(temporaryURL.path));")
+        try FileManager.default.moveItem(at: temporaryURL, to: pristineURL)
+        try setPrivatePermissions(on: pristineURL)
     }
 
-    private func mergeStateDatabase(from sourceURL: URL, to destinationURL: URL) throws {
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
-        guard FileManager.default.fileExists(atPath: destinationURL.path) else {
-            try FileManager.default.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-            return
+    private func relabelThreadsForProfile(_ profile: CodexProfile) throws {
+        guard let modelProvider = profileValue(for: "model_provider", in: profile.contents) else { return }
+        let model = profileValue(for: "model", in: profile.contents)
+
+        if FileManager.default.fileExists(atPath: stateDatabaseURL.path) {
+            var sql = "PRAGMA busy_timeout = 5000; UPDATE threads SET model_provider = \(sqliteLiteral(modelProvider));"
+            if let model {
+                sql += " UPDATE threads SET model = \(sqliteLiteral(model));"
+            }
+            try runSQLite(stateDatabaseURL, sql: sql)
         }
 
-        let sql = """
-        PRAGMA busy_timeout = 5000;
-        ATTACH DATABASE \(sqliteLiteral(sourceURL.path)) AS snapshot;
-        INSERT OR IGNORE INTO threads SELECT * FROM snapshot.threads;
-        INSERT OR IGNORE INTO thread_dynamic_tools SELECT * FROM snapshot.thread_dynamic_tools;
-        INSERT OR IGNORE INTO agent_jobs SELECT * FROM snapshot.agent_jobs;
-        INSERT OR IGNORE INTO agent_job_items SELECT * FROM snapshot.agent_job_items;
-        INSERT OR IGNORE INTO thread_spawn_edges SELECT * FROM snapshot.thread_spawn_edges;
-        DETACH DATABASE snapshot;
-        """
-        try runSQLite(destinationURL, sql: sql)
+        if FileManager.default.fileExists(atPath: codexDevDatabaseURL.path) {
+            try runSQLite(codexDevDatabaseURL, sql: "PRAGMA busy_timeout = 5000; UPDATE local_thread_catalog SET model_provider = \(sqliteLiteral(modelProvider));")
+        }
     }
 
-    private func mergeCatalogDatabase(from sourceURL: URL, to destinationURL: URL) throws {
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
-        guard FileManager.default.fileExists(atPath: destinationURL.path) else {
-            try FileManager.default.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-            return
+    private func profileValue(for key: String, in toml: String) -> String? {
+        for line in toml.split(separator: "\n", omittingEmptySubsequences: true) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("\(key) ="), !trimmed.hasPrefix("[") else { continue }
+
+            let value = String(trimmed.dropFirst(key.count + 3)).trimmingCharacters(in: .whitespaces)
+            if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
+                return String(value.dropFirst().dropLast())
+            }
+            return value
         }
 
-        let sql = """
-        PRAGMA busy_timeout = 5000;
-        ATTACH DATABASE \(sqliteLiteral(sourceURL.path)) AS snapshot;
-        INSERT OR IGNORE INTO local_thread_catalog_hosts SELECT * FROM snapshot.local_thread_catalog_hosts;
-        INSERT OR IGNORE INTO local_thread_catalog SELECT * FROM snapshot.local_thread_catalog;
-        INSERT OR IGNORE INTO local_thread_catalog_metadata SELECT * FROM snapshot.local_thread_catalog_metadata;
-        INSERT OR IGNORE INTO local_thread_catalog_sync_state SELECT * FROM snapshot.local_thread_catalog_sync_state;
-        DETACH DATABASE snapshot;
-        """
-        try runSQLite(destinationURL, sql: sql)
+        return nil
     }
 
     private func runSQLite(_ databaseURL: URL, sql: String) throws {
