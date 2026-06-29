@@ -572,14 +572,15 @@ final class ProfileStore: ObservableObject {
     func apply(_ profile: CodexProfile) {
         do {
             try ensureBackup()
+            closeCodexForStateUpdate()
             try snapshotCurrentThreads()
             try write(profile.contents, to: configURL)
             try applyAuthSnapshotIfAvailable(for: profile)
             try mergeThreadSnapshot(for: profile)
             activeProfileID = profile.id
             writeActiveProfileID(profile.id)
-            lastMessage = "Applied \(profile.name). Restarting Codex..."
-            restartCodex()
+            lastMessage = "Applied \(profile.name). Opening Codex..."
+            openCodex()
         } catch {
             lastMessage = "Could not apply profile: \(error.localizedDescription)"
         }
@@ -609,6 +610,32 @@ final class ProfileStore: ObservableObject {
                 self.openCodex()
             }
         }
+    }
+
+    private func closeCodexForStateUpdate() {
+        let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: codexBundleIdentifier)
+        guard !runningApps.isEmpty else { return }
+
+        for app in runningApps {
+            app.terminate()
+        }
+
+        let deadline = Date().addingTimeInterval(2.0)
+        while Date() < deadline {
+            let stillRunning = NSRunningApplication.runningApplications(withBundleIdentifier: codexBundleIdentifier)
+            if stillRunning.isEmpty {
+                return
+            }
+
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+        }
+
+        let stillRunning = NSRunningApplication.runningApplications(withBundleIdentifier: codexBundleIdentifier)
+        for app in stillRunning {
+            app.forceTerminate()
+        }
+
+        Thread.sleep(forTimeInterval: 0.5)
     }
 
     func refreshActiveProfile() {
