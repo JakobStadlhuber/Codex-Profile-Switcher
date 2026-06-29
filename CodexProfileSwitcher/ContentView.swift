@@ -752,7 +752,7 @@ final class ProfileStore: ObservableObject {
                 lastMessage = "Opening Codex for file-based sign-in. Sign in, then capture it for \(updated.name)."
             }
 
-            openCodex(successMessage: "Codex opened for sign-in. After signing in, capture it for \(updated.name).")
+            openCodex(successMessage: "Codex opened for sign-in. After signing in, capture it for \(updated.name).", hideProfileSwitcher: true)
         } catch {
             lastMessage = "Could not prepare Codex sign-in: \(error.localizedDescription)"
         }
@@ -760,9 +760,13 @@ final class ProfileStore: ObservableObject {
         return updated
     }
 
-    private func openCodex(successMessage: String = "Codex restarted") {
+    private func openCodex(successMessage: String = "Codex restarted", hideProfileSwitcher: Bool = false) {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
+
+        if hideProfileSwitcher {
+            NSApp.hide(nil)
+        }
 
         NSWorkspace.shared.openApplication(at: codexAppURL, configuration: configuration) { [weak self] _, error in
             DispatchQueue.main.async {
@@ -770,6 +774,9 @@ final class ProfileStore: ObservableObject {
                     self?.lastMessage = "Could not open Codex: \(error.localizedDescription)"
                 } else {
                     self?.lastMessage = successMessage
+                    NSRunningApplication.runningApplications(withBundleIdentifier: self?.codexBundleIdentifier ?? "")
+                        .first?
+                        .activate(options: [.activateAllWindows])
                 }
             }
         }
