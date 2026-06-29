@@ -406,13 +406,9 @@ final class ProfileStore: ObservableObject {
     let codexDirectoryURL: URL
     private let configURL: URL
     private let authURL: URL
-    private let sqliteDirectoryURL: URL
-    private let stateDatabaseURL: URL
-    private let codexDevDatabaseURL: URL
     private let profilesDirectoryURL: URL
     private let authSnapshotsDirectoryURL: URL
     private let threadSnapshotsDirectoryURL: URL
-    private let backupsDirectoryURL: URL
     private let stateURL: URL
     private let codexBundleIdentifier = "com.openai.codex"
     private let codexAppURL = URL(filePath: "/Applications/Codex.app", directoryHint: .isDirectory)
@@ -426,9 +422,6 @@ final class ProfileStore: ObservableObject {
         codexDirectoryURL = homeURL.appending(path: ".codex", directoryHint: .isDirectory)
         configURL = codexDirectoryURL.appending(path: "config.toml")
         authURL = codexDirectoryURL.appending(path: "auth.json")
-        sqliteDirectoryURL = codexDirectoryURL.appending(path: "sqlite", directoryHint: .isDirectory)
-        stateDatabaseURL = sqliteDirectoryURL.appending(path: "state_5.sqlite")
-        codexDevDatabaseURL = sqliteDirectoryURL.appending(path: "codex-dev.db")
         profilesDirectoryURL = codexDirectoryURL
             .appending(path: "profile-switcher", directoryHint: .isDirectory)
             .appending(path: "profiles", directoryHint: .isDirectory)
@@ -438,9 +431,6 @@ final class ProfileStore: ObservableObject {
         threadSnapshotsDirectoryURL = codexDirectoryURL
             .appending(path: "profile-switcher", directoryHint: .isDirectory)
             .appending(path: "threads", directoryHint: .isDirectory)
-        backupsDirectoryURL = codexDirectoryURL
-            .appending(path: "profile-switcher", directoryHint: .isDirectory)
-            .appending(path: "backups", directoryHint: .isDirectory)
         stateURL = codexDirectoryURL
             .appending(path: "profile-switcher", directoryHint: .isDirectory)
             .appending(path: "state.json")
@@ -571,10 +561,8 @@ final class ProfileStore: ObservableObject {
         do {
             try ensureBackup()
             closeCodexForStateUpdate()
-            try backupStateDatabase()
             try write(profile.contents, to: configURL)
             try applyAuthSnapshotIfAvailable(for: profile)
-            try relabelThreadsForProfile(profile)
             activeProfileID = profile.id
             writeActiveProfileID(profile.id)
             lastMessage = "Applied \(profile.name). Opening Codex..."
@@ -777,10 +765,6 @@ final class ProfileStore: ObservableObject {
             at: threadSnapshotsDirectoryURL,
             withIntermediateDirectories: true
         )
-        try? FileManager.default.createDirectory(
-            at: backupsDirectoryURL,
-            withIntermediateDirectories: true
-        )
     }
 
     private func ensureBackup() throws {
@@ -834,79 +818,6 @@ final class ProfileStore: ObservableObject {
         }
 
         try setPrivatePermissions(on: url)
-    }
-
-    private func backupStateDatabase() throws {
-        guard FileManager.default.fileExists(atPath: stateDatabaseURL.path) else { return }
-
-        try FileManager.default.createDirectory(at: backupsDirectoryURL, withIntermediateDirectories: true)
-        let pristineURL = backupsDirectoryURL.appending(path: "state_5.pristine.sqlite")
-        guard !FileManager.default.fileExists(atPath: pristineURL.path) else { return }
-
-        let temporaryURL = backupsDirectoryURL.appending(path: ".state_5.pristine.tmp")
-        if FileManager.default.fileExists(atPath: temporaryURL.path) {
-            try FileManager.default.removeItem(at: temporaryURL)
-        }
-
-        try runSQLite(stateDatabaseURL, sql: "PRAGMA busy_timeout = 5000; PRAGMA wal_checkpoint(FULL); VACUUM INTO \(sqliteLiteral(temporaryURL.path));")
-        try FileManager.default.moveItem(at: temporaryURL, to: pristineURL)
-        try setPrivatePermissions(on: pristineURL)
-    }
-
-    private func relabelThreadsForProfile(_ profile: CodexProfile) throws {
-        guard let modelProvider = profileValue(for: "model_provider", in: profile.contents) else { return }
-        let model = profileValue(for: "model", in: profile.contents)
-
-        if FileManager.default.fileExists(atPath: stateDatabaseURL.path) {
-            var sql = "PRAGMA busy_timeout = 5000; UPDATE threads SET model_provider = \(sqliteLiteral(modelProvider));"
-            if let model {
-                sql += " UPDATE threads SET model = \(sqliteLiteral(model));"
-            }
-            try runSQLite(stateDatabaseURL, sql: sql)
-        }
-
-        if FileManager.default.fileExists(atPath: codexDevDatabaseURL.path) {
-            try runSQLite(codexDevDatabaseURL, sql: "PRAGMA busy_timeout = 5000; UPDATE local_thread_catalog SET model_provider = \(sqliteLiteral(modelProvider));")
-        }
-    }
-
-    private func profileValue(for key: String, in toml: String) -> String? {
-        for line in toml.split(separator: "\n", omittingEmptySubsequences: true) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("\(key) ="), !trimmed.hasPrefix("[") else { continue }
-
-            let value = String(trimmed.dropFirst(key.count + 3)).trimmingCharacters(in: .whitespaces)
-            if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
-                return String(value.dropFirst().dropLast())
-            }
-            return value
-        }
-
-        return nil
-    }
-
-    private func runSQLite(_ databaseURL: URL, sql: String) throws {
-        let process = Process()
-        process.executableURL = URL(filePath: "/usr/bin/sqlite3")
-        process.arguments = [databaseURL.path, sql]
-
-        let errorPipe = Pipe()
-        process.standardError = errorPipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            let message = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw NSError(domain: "CodexProfileSwitcher.SQLite", code: Int(process.terminationStatus), userInfo: [
-                NSLocalizedDescriptionKey: message?.isEmpty == false ? message! : "sqlite3 failed"
-            ])
-        }
-    }
-
-    private func sqliteLiteral(_ value: String) -> String {
-        "'\(value.replacingOccurrences(of: "'", with: "''"))'"
     }
 
     private func setPrivatePermissions(on url: URL) throws {
