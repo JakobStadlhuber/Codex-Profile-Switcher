@@ -230,6 +230,11 @@ struct ProfileManagerView: View {
             selectProfileIfNeeded()
         }
         .navigationSplitViewStyle(.balanced)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                EmptyView()
+            }
+        }
     }
 
     private func selectProfileIfNeeded() {
@@ -298,7 +303,7 @@ struct ProfileEditorView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Label("Codex Login", systemImage: profile.hasAuthSnapshot ? "key.fill" : "key")
+                        Label("Profile Login", systemImage: profile.hasAuthSnapshot ? "key.fill" : "key")
                             .font(.headline)
 
                         Spacer()
@@ -308,34 +313,11 @@ struct ProfileEditorView: View {
                             .foregroundStyle(profile.hasAuthSnapshot ? .green : .secondary)
                     }
 
-                    Text("Optional. Capture the login currently stored by Codex.app. Applying this profile will restore that login before Codex restarts.")
+                    Text("Optional. Save the current ChatGPT/Codex login with this profile. Applying the profile restores that saved login before restart.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    HStack {
-                        Button(store.hasCurrentAuth ? "Capture Current Login" : "Sign In to Capture") {
-                            if store.hasCurrentAuth {
-                                store.captureCurrentAuth(for: profile)
-                            } else {
-                                let updated = store.startCodexSignIn(for: profile, name: name, contents: contents)
-                                name = updated.name
-                                contents = updated.contents
-                                selectedProfileID = updated.id
-                            }
-                        }
-
-                        Button("Sign In in Codex...") {
-                            let updated = store.startCodexSignIn(for: profile, name: name, contents: contents)
-                            name = updated.name
-                            contents = updated.contents
-                            selectedProfileID = updated.id
-                        }
-
-                        Button("Remove Login") {
-                            store.removeAuthSnapshot(for: profile)
-                        }
-                        .disabled(!profile.hasAuthSnapshot)
-                    }
+                    loginActionButtons
 
                     if !store.lastMessage.isEmpty {
                         Text(store.lastMessage)
@@ -348,6 +330,7 @@ struct ProfileEditorView: View {
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
             }
             .padding(18)
+            .padding(.top, 18)
 
             Divider()
 
@@ -361,6 +344,77 @@ struct ProfileEditorView: View {
         .onChange(of: profile.id) { _, newID in
             load(profileID: newID)
         }
+    }
+
+    private var loginActionButtons: some View {
+        ViewThatFits(in: .horizontal) {
+            loginActionRow
+
+            loginActionColumn
+        }
+    }
+
+    @ViewBuilder
+    private var loginActionRow: some View {
+        HStack {
+            if store.hasCurrentAuth {
+                saveCurrentLoginButton
+                differentLoginButton
+            } else {
+                signInToAddLoginButton
+            }
+
+            removeLoginButton
+        }
+    }
+
+    @ViewBuilder
+    private var loginActionColumn: some View {
+        VStack(alignment: .leading) {
+            if store.hasCurrentAuth {
+                saveCurrentLoginButton
+                differentLoginButton
+            } else {
+                signInToAddLoginButton
+            }
+
+            removeLoginButton
+        }
+    }
+
+    private var captureLoginButton: some View {
+        Button("Save Current Login") {
+            store.captureCurrentAuth(for: profile)
+        }
+    }
+
+    private var saveCurrentLoginButton: some View {
+        captureLoginButton
+    }
+
+    private var signInToAddLoginButton: some View {
+        Button("Sign In to Add Login...") {
+            let updated = store.startCodexSignIn(for: profile, name: name, contents: contents)
+            name = updated.name
+            contents = updated.contents
+            selectedProfileID = updated.id
+        }
+    }
+
+    private var differentLoginButton: some View {
+        Button("Use Different Login...") {
+            let updated = store.startCodexSignIn(for: profile, name: name, contents: contents)
+            name = updated.name
+            contents = updated.contents
+            selectedProfileID = updated.id
+        }
+    }
+
+    private var removeLoginButton: some View {
+        Button("Remove Saved Login") {
+            store.removeAuthSnapshot(for: profile)
+        }
+        .disabled(!profile.hasAuthSnapshot)
     }
 
     private func load(profileID: UUID) {
@@ -729,7 +783,7 @@ final class ProfileStore: ObservableObject {
 
     func captureCurrentAuth(for profile: CodexProfile) {
         guard hasCurrentAuth else {
-            lastMessage = "No file-based Codex login found at ~/.codex/auth.json. Set cli_auth_credentials_store = \"file\", sign in with Codex, then capture again."
+            lastMessage = "No file-based ChatGPT/Codex login found at ~/.codex/auth.json. Sign in first, then save it to this profile."
             return
         }
 
@@ -737,9 +791,9 @@ final class ProfileStore: ObservableObject {
             let data = try Data(contentsOf: authURL)
             try write(data, to: authSnapshotPath(for: profile))
             markAuthSnapshotPresent(for: profile)
-            lastMessage = "Captured current Codex login for \(profile.name)"
+            lastMessage = "Saved current login for \(profile.name)"
         } catch {
-            lastMessage = "Could not capture Codex login: \(error.localizedDescription)"
+            lastMessage = "Could not save current login: \(error.localizedDescription)"
         }
     }
 
@@ -750,7 +804,7 @@ final class ProfileStore: ObservableObject {
                 try FileManager.default.removeItem(at: profileAuthURL)
             }
             reload()
-            lastMessage = "Removed saved Codex login for \(profile.name)"
+            lastMessage = "Removed saved login for \(profile.name)"
         } catch {
             lastMessage = "Could not remove saved Codex login: \(error.localizedDescription)"
         }
@@ -770,12 +824,12 @@ final class ProfileStore: ObservableObject {
             if FileManager.default.fileExists(atPath: authURL.path) {
                 try ensureAuthBackup()
                 try FileManager.default.removeItem(at: authURL)
-                lastMessage = "Current file-based login was backed up. Sign in in Codex, then capture it for \(updated.name)."
+                lastMessage = "Current login was backed up. Sign in with the account to save for \(updated.name)."
             } else {
-                lastMessage = "Opening Codex for file-based sign-in. Sign in, then capture it for \(updated.name)."
+                lastMessage = "Opening ChatGPT/Codex. Sign in with the account to save for \(updated.name)."
             }
 
-            openCodex(successMessage: "Codex opened for sign-in. After signing in, capture it for \(updated.name).", hideProfileSwitcher: true)
+            openCodex(successMessage: "ChatGPT/Codex opened. After signing in, save the login for \(updated.name).", hideProfileSwitcher: true)
         } catch {
             lastMessage = "Could not prepare Codex sign-in: \(error.localizedDescription)"
         }

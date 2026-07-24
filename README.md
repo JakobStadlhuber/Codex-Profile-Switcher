@@ -72,7 +72,7 @@ To use this feature, configure Codex to use file-based credential storage:
 cli_auth_credentials_store = "file"
 ```
 
-Then sign in with Codex, select a profile, and click **Capture Current Login**. Applying that profile later restores its saved login before restarting Codex. Treat saved auth snapshots like passwords; they contain Codex access tokens.
+Then sign in with ChatGPT/Codex, select a profile, and click **Save Current Login**. Applying that profile later restores its saved login before restarting Codex. Treat saved auth snapshots like passwords; they contain Codex access tokens.
 
 ## Build From Source
 
