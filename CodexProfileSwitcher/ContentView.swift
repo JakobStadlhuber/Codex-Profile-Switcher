@@ -437,7 +437,7 @@ final class ProfileStore: ObservableObject {
     private let threadSnapshotsDirectoryURL: URL
     private let stateURL: URL
     private let codexBundleIdentifier = "com.openai.codex"
-    private let codexAppURL = URL(filePath: "/Applications/Codex.app", directoryHint: .isDirectory)
+    private let codexAppNames = ["ChatGPT.app", "Codex.app"]
 
     var statusSymbolName: String {
         activeProfileID == nil ? "person.crop.circle.badge.questionmark" : "person.crop.circle.badge.checkmark"
@@ -605,7 +605,7 @@ final class ProfileStore: ObservableObject {
     }
 
     func restartCodex(successMessage: String = "Codex restarted") {
-        let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: codexBundleIdentifier)
+        let runningApps = runningCodexApplications()
 
         if runningApps.isEmpty {
             openCodex(successMessage: successMessage)
@@ -619,7 +619,7 @@ final class ProfileStore: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             guard let self else { return }
 
-            let stillRunning = NSRunningApplication.runningApplications(withBundleIdentifier: self.codexBundleIdentifier)
+            let stillRunning = self.runningCodexApplications()
             for app in stillRunning {
                 app.forceTerminate()
             }
@@ -633,7 +633,7 @@ final class ProfileStore: ObservableObject {
     }
 
     private func closeCodexForStateUpdate() {
-        let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: codexBundleIdentifier)
+        let runningApps = runningCodexApplications()
 
         for app in runningApps {
             app.terminate()
@@ -641,7 +641,7 @@ final class ProfileStore: ObservableObject {
 
         let deadline = Date().addingTimeInterval(2.0)
         while Date() < deadline {
-            let stillRunning = NSRunningApplication.runningApplications(withBundleIdentifier: codexBundleIdentifier)
+            let stillRunning = runningCodexApplications()
             if stillRunning.isEmpty {
                 break
             }
@@ -649,7 +649,7 @@ final class ProfileStore: ObservableObject {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
         }
 
-        let stillRunning = NSRunningApplication.runningApplications(withBundleIdentifier: codexBundleIdentifier)
+        let stillRunning = runningCodexApplications()
         for app in stillRunning {
             app.forceTerminate()
         }
@@ -660,6 +660,9 @@ final class ProfileStore: ObservableObject {
 
     private func terminateCodexHelpers() {
         let patterns = [
+            "ChatGPT.app/Contents/Resources/codex app-server",
+            "ChatGPT.app/Contents/Resources/native/bare-modifier-monitor",
+            "ChatGPT.app/Contents/Resources/cua_node/bin/node_repl",
             "Codex.app/Contents/Resources/codex app-server",
             "Codex.app/Contents/Resources/native/bare-modifier-monitor",
             "Codex.app/Contents/Resources/cua_node/bin/node_repl"
@@ -781,6 +784,11 @@ final class ProfileStore: ObservableObject {
     }
 
     private func openCodex(successMessage: String = "Codex restarted", hideProfileSwitcher: Bool = false) {
+        guard let appURL = installedCodexAppURL() else {
+            lastMessage = "Could not find ChatGPT/Codex. Install ChatGPT, then try again."
+            return
+        }
+
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
 
@@ -788,18 +796,37 @@ final class ProfileStore: ObservableObject {
             NSApp.hide(nil)
         }
 
-        NSWorkspace.shared.openApplication(at: codexAppURL, configuration: configuration) { [weak self] _, error in
+        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { [weak self] _, error in
             DispatchQueue.main.async {
                 if let error {
                     self?.lastMessage = "Could not open Codex: \(error.localizedDescription)"
                 } else {
                     self?.lastMessage = successMessage
-                    NSRunningApplication.runningApplications(withBundleIdentifier: self?.codexBundleIdentifier ?? "")
-                        .first?
-                        .activate(options: [.activateAllWindows])
+                    self?.runningCodexApplications().first?.activate(options: [.activateAllWindows])
                 }
             }
         }
+    }
+
+    private func runningCodexApplications() -> [NSRunningApplication] {
+        NSRunningApplication.runningApplications(withBundleIdentifier: codexBundleIdentifier)
+    }
+
+    private func installedCodexAppURL() -> URL? {
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: codexBundleIdentifier) {
+            return appURL
+        }
+
+        let applicationDirectories = [
+            URL(filePath: "/Applications", directoryHint: .isDirectory),
+            FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications", directoryHint: .isDirectory)
+        ]
+
+        return applicationDirectories
+            .flatMap { directoryURL in
+                codexAppNames.map { directoryURL.appending(path: $0, directoryHint: .isDirectory) }
+            }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     private func ensureDirectories() {
