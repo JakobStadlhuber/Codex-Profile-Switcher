@@ -24,6 +24,7 @@ struct CodexProfileSwitcherApp: App {
         }
         .defaultSize(width: 920, height: 640)
         .windowResizability(.contentMinSize)
+        .windowStyle(.hiddenTitleBar)
     }
 }
 
@@ -230,11 +231,7 @@ struct ProfileManagerView: View {
             selectProfileIfNeeded()
         }
         .navigationSplitViewStyle(.balanced)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                EmptyView()
-            }
-        }
+        .padding(.top, 42)
     }
 
     private func selectProfileIfNeeded() {
@@ -330,7 +327,6 @@ struct ProfileEditorView: View {
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
             }
             .padding(18)
-            .padding(.top, 18)
 
             Divider()
 
